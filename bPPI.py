@@ -48,7 +48,17 @@ def read_sequence(seq_path):
                 seq += line.strip()
     return seq
 
-def find_motifs_and_predict_interaction(protA, protB, bzip_motif_detector, bzip_interaction_detector, mvocab, ovocab, am_acid, device, MAXL = 92, max_batch_size = 256):
+def find_motifs_and_predict_interaction(protA, 
+                                        protB, 
+                                        bzip_motif_detector, 
+                                        bzip_interaction_detector, 
+                                        mvocab, 
+                                        ovocab, 
+                                        am_acid, 
+                                        best_motif_idx,
+                                        device, 
+                                        MAXL = 92, 
+                                        max_batch_size = 256):
     max_to_search_A = len(protA) - 29
     max_to_search_B = len(protB) - 29
     indices_A = [i for i, ch in enumerate(protA[:max_to_search_A]) if ch == 'N']
@@ -86,7 +96,7 @@ def find_motifs_and_predict_interaction(protA, protB, bzip_motif_detector, bzip_
     sorted_indices = numpy.argsort(sigmoid_prob)[::-1]
     high_prob_indices = sorted_indices[sigmoid_prob[sorted_indices] > 0.5]
     if( len(high_prob_indices) > 0 ):
-        best_motif = high_prob_indices[0:1]
+        best_motif = high_prob_indices[best_motif_idx:best_motif_idx+1]
         logits_clsf, enc_self_attn = evaluate_motifs(bzip_interaction_detector, 
                                                       am_info[best_motif, :], 
                                                       add_info[best_motif, :, :], 
@@ -147,7 +157,7 @@ def download_models(PPI_TYPE="General"):
 
 
 
-def bPPI_predict(seqA, seqB, debug = False):
+def bPPI_predict(seqA, seqB, motiftoeval, debug = False):
     config = load_config()
     bzip_motif_detector_loc = config["motif_detector"]
     bzip_interaction_predictor_loc = config["interaction_detector"]
@@ -179,7 +189,15 @@ def bPPI_predict(seqA, seqB, debug = False):
     
     seqA = read_sequence(seqA)
     seqB = read_sequence(seqB)
-    nmotifs, max_pred, best_pair, enc_self_attn = find_motifs_and_predict_interaction(seqA, seqB, bzip_motif_detector, bzip_interaction_detector, mvocab, ovocab, am_acid, device)
+    nmotifs, max_pred, best_pair, enc_self_attn = find_motifs_and_predict_interaction(seqA, 
+                                                                                      seqB, 
+                                                                                      bzip_motif_detector, 
+                                                                                      bzip_interaction_detector, 
+                                                                                      mvocab, 
+                                                                                      ovocab, 
+                                                                                      am_acid, 
+                                                                                      motiftoeval, 
+                                                                                      device)
     
     print(f"Motifs detected: {nmotifs}")
     print(f"Interaction Probability: {max_pred}")
@@ -195,6 +213,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--seqA", type=str, metavar="PATH", help="FASTA file for sequence A")
     parser.add_argument("--seqB", type=str, metavar="PATH", help="FASTA file for sequence B")
+    parser.add_argument("--motiftoeval", type=int, default=0, help="Motif for interaction prediction. Default: 0 (or best)")
     parser.add_argument("--viewInteraction", action="store_true", help="View interaction. Default: False")
 
     args = parser.parse_args()
@@ -202,7 +221,7 @@ if __name__ == "__main__":
     if args.download:
         download_models(args.download)
     elif args.seqA and args.seqB:
-        best_pair, atten_scores = bPPI_predict(args.seqA, args.seqB)
+        best_pair, atten_scores = bPPI_predict(args.seqA, args.seqB, args.motiftoeval)
         if( args.viewInteraction and best_pair is not None):
             nlen = min(len(best_pair[0]), len(best_pair[1]))
             sinfo_a = best_pair[0][:nlen]
@@ -214,7 +233,7 @@ if __name__ == "__main__":
             plot_cls_attention_heptad(sinfo_a,
                                       sinfo_b,
                                       cls_attention,
-                                      [Path(args.seqA).name.split('.')[0], Path(args.seqA).name.split('.')[0]],
+                                      [Path(args.seqA).name.split('.')[0], Path(args.seqB).name.split('.')[0]],
                                      )
     else:
         parser.print_help()
