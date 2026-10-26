@@ -105,7 +105,7 @@ def find_motifs_and_predict_interaction(protA,
                                       
         sigmoid_prob = sigmoid(logits_clsf[0, 1])
         sigmoid_prob = numpy.round(sigmoid_prob, 2)
-        best_pair = n_pairs[high_prob_indices[0]]
+        best_pair = n_pairs[high_prob_indices[best_motif_idx]]
         enc_self_attn = enc_self_attn.cpu().numpy()  
         return len(high_prob_indices), sigmoid_prob, best_pair, enc_self_attn
     else:
