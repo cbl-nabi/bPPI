@@ -9,12 +9,12 @@ Download model weights from the Hugging Face registry:
 
 ```bash
 # Options: "General", "Temperature4C", "Temperature21C", "Temperature37C"
-python predict.py --download "Temperature37C"
+python bPPI.py --download "Temperature37C"
 ```
 
 ### Step 2: Evaluate Sequence Interaction Pairs
 ```bash
-python predict.py --seqA path/to/protein1.fasta --seqB path/to/protein2.fasta
+python bPPI.py --seqA path/to/protein1.fasta --seqB path/to/protein2.fasta
 ```
 
 ### Available Model Variations
@@ -35,7 +35,7 @@ Every prediction query targets the structural layers defined within `motifDectec
 bPPI is also available online through Google Colaboratory.  
 No installation required!
 
-👉 **Launch it here**: [bPPI@Google-Colab](https://colab.research.google.com/drive/1WGjaFLSPk-Y5mipuuJ6ki5FY5xPMrJEH#scrollTo=sVnTq1QQXF_C)
+👉 **Launch it here**: [bPPI@Google-Colab](https://colab.research.google.com/drive/1gcs-P25yzoTbbRF7uZmLRpY5fzCYRTzt)
 
 ----
 
