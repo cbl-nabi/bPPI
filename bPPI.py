@@ -48,17 +48,16 @@ def read_sequence(seq_path):
                 seq += line.strip()
     return seq
 
-def find_motifs_and_predict_interaction(protA, 
-                                        protB, 
-                                        bzip_motif_detector, 
-                                        bzip_interaction_detector, 
-                                        mvocab, 
-                                        ovocab, 
-                                        am_acid, 
-                                        best_motif_idx,
-                                        device, 
-                                        MAXL = 92, 
-                                        max_batch_size = 256):
+def find_motifs(protA, 
+                protB, 
+                bzip_motif_detector, 
+                mvocab, 
+                ovocab, 
+                am_acid, 
+                device, 
+                MAXL = 92, 
+                max_batch_size = 256):
+                
     max_to_search_A = len(protA) - 29
     max_to_search_B = len(protB) - 29
     indices_A = [i for i, ch in enumerate(protA[:max_to_search_A]) if ch == 'N']
@@ -69,7 +68,8 @@ def find_motifs_and_predict_interaction(protA,
             motif_A = protA[A: (A+92)]
             motif_B = protB[B: (B+92)]
             n_pairs.append((motif_A, motif_B))
-
+    
+    n_pairs = numpy.array(n_pairs)
     bdata_tf = transform_bzip_seqs(n_pairs, mvocab, ovocab, am_acid, MAXL)
     am_info, add_info, seg_info  = bdata_tf.transform()
     am_info = torch.Tensor(am_info).to(dtype=torch.long, device=device)
@@ -95,23 +95,34 @@ def find_motifs_and_predict_interaction(protA,
     sigmoid_prob = numpy.array([sigmoid(logits_clsf[i, 1]) for i in range(logits_clsf.shape[0])])
     sorted_indices = numpy.argsort(sigmoid_prob)[::-1]
     high_prob_indices = sorted_indices[sigmoid_prob[sorted_indices] > 0.5]
-    if( len(high_prob_indices) > 0 ):
-        best_motif = high_prob_indices[best_motif_idx:best_motif_idx+1]
-        logits_clsf, enc_self_attn = evaluate_motifs(bzip_interaction_detector, 
-                                                      am_info[best_motif, :], 
-                                                      add_info[best_motif, :, :], 
-                                                      seg_info[best_motif, :], 
-                                                      device)
-                                      
-        sigmoid_prob = sigmoid(logits_clsf[0, 1])
-        sigmoid_prob = numpy.round(sigmoid_prob, 2)
-        best_pair = n_pairs[high_prob_indices[best_motif_idx]]
-        enc_self_attn = enc_self_attn.cpu().numpy()  
-        return len(high_prob_indices), sigmoid_prob, best_pair, enc_self_attn
-    else:
-        return 0, 0, None, None
+    if( len(high_prob_indices) == 0):
+        return None, None, None
+    if( len(high_prob_indices) == 1):
+        high_prob_indices = [high_prob_indices]
+    return sigmoid_prob[high_prob_indices], n_pairs[high_prob_indices], (am_info[high_prob_indices, :], add_info[high_prob_indices, :], seg_info[high_prob_indices, :])
 
-
+def predict_interaction(predictions, 
+                        motif_pairs,
+                        encoded_pairs, 
+                        bzip_interaction_detector, 
+                        best_motif,
+                        device):
+    #best_motif = high_prob_indices[best_motif_idx:best_motif_idx+1]
+    am_info, add_info, seg_info = encoded_pairs
+    best_motif = [best_motif]
+    logits_clsf, enc_self_attn = evaluate_motifs(bzip_interaction_detector, 
+                                                  am_info[best_motif, :], 
+                                                  add_info[best_motif, :, :], 
+                                                  seg_info[best_motif, :], 
+                                                  device)
+                                  
+    sigmoid_prob = sigmoid(logits_clsf[0, 1])
+    sigmoid_prob = numpy.round(sigmoid_prob, 2)
+    #best_pair = n_pairs[high_prob_indices[best_motif_idx]]
+    best_pair = motif_pairs[best_motif[0]]
+    enc_self_attn = enc_self_attn.cpu().numpy()  
+    return sigmoid_prob, best_pair, enc_self_attn
+        
 def save_config(motif_path, interaction_path):
     with open(CONFIG_FILE, "w") as f:
         json.dump({
@@ -157,7 +168,7 @@ def download_models(PPI_TYPE="General"):
 
 
 
-def bPPI_predict(seqA, seqB, motiftoeval, debug = False):
+def bPPI_predict(seqA, seqB, onlymotifs, motiftoeval, debug = False):
     config = load_config()
     bzip_motif_detector_loc = config["motif_detector"]
     bzip_interaction_predictor_loc = config["interaction_detector"]
@@ -176,30 +187,40 @@ def bPPI_predict(seqA, seqB, motiftoeval, debug = False):
     mvocab, ovocab, am_acid = new_amino_acid_vocab()
     vocab_size = len(mvocab)
     ovocab_size = [len(ovocab.get(k)) for k in ovocab.keys()]
+    seqA = read_sequence(seqA)
+    seqB = read_sequence(seqB)
     
     bzip_motif_detector = BZIP_MOTIF(vocab_size, ovocab_size, n_segments, d_model, n_layers, n_heads)
     snap = torch.load(bzip_motif_detector_loc, weights_only=True, map_location=torch.device('cpu'))
     bzip_motif_detector.load_state_dict(snap)
     bzip_motif_detector = bzip_motif_detector.to(device)
     
+    predictions, motif_pairs, encoded_pairs = find_motifs(seqA, 
+                                                          seqB, 
+                                                          bzip_motif_detector, 
+                                                          mvocab, 
+                                                          ovocab, 
+                                                          am_acid, 
+                                                          device)
+    if( onlymotifs == True ):
+        return predictions, motif_pairs
+    
+    if( len(predictions) == 0 ):
+        return None, None
+    
     bzip_interaction_detector = BZIP_INTERACTION(vocab_size, ovocab_size, n_segments, d_model, n_layers, n_heads)
     snap = torch.load(bzip_interaction_predictor_loc, weights_only=True, map_location=torch.device('cpu'))
     bzip_interaction_detector.load_state_dict(snap)
     bzip_interaction_detector = bzip_interaction_detector.to(device)
-    
-    seqA = read_sequence(seqA)
-    seqB = read_sequence(seqB)
-    nmotifs, max_pred, best_pair, enc_self_attn = find_motifs_and_predict_interaction(seqA, 
-                                                                                      seqB, 
-                                                                                      bzip_motif_detector, 
-                                                                                      bzip_interaction_detector, 
-                                                                                      mvocab, 
-                                                                                      ovocab, 
-                                                                                      am_acid, 
-                                                                                      motiftoeval, 
-                                                                                      device)
-    
-    print(f"Motifs detected: {nmotifs}")
+
+    max_pred, best_pair, enc_self_attn = predict_interaction(predictions, 
+                                                             motif_pairs,
+                                                             encoded_pairs,
+                                                             bzip_interaction_detector, 
+                                                             motiftoeval, 
+                                                             device)
+        
+    print(f"Motifs detected: {len(predictions)}")
     print(f"Interaction Probability: {max_pred}")
     return best_pair, enc_self_attn
 
@@ -208,33 +229,44 @@ if __name__ == "__main__":
     
     parser.add_argument("--download", type=str, metavar="MODEL_TYPE",
                         choices=["General", "Temperature4C", "Temperature21C", "Temperature37C"],
-                        help="Download weights. Options: General, Temperature4C, Temperature 21C, Temperature 37C")
+                        help="Download weights. Options: General, Temperature4C, Temperature21C, Temperature37C")
     
 
     parser.add_argument("--seqA", type=str, metavar="PATH", help="FASTA file for sequence A")
     parser.add_argument("--seqB", type=str, metavar="PATH", help="FASTA file for sequence B")
     parser.add_argument("--motiftoeval", type=int, default=0, help="Motif for interaction prediction. Default: 0 (or best)")
     parser.add_argument("--viewInteraction", action="store_true", help="View interaction. Default: False")
+    parser.add_argument("--onlymotifs", action="store_true", help="View interaction. Default: False")
 
     args = parser.parse_args()
-
+    print(args)
+    
     if args.download:
         download_models(args.download)
     elif args.seqA and args.seqB:
-        best_pair, atten_scores = bPPI_predict(args.seqA, args.seqB, args.motiftoeval)
-        if( args.viewInteraction and best_pair is not None):
-            nlen = min(len(best_pair[0]), len(best_pair[1]))
-            sinfo_a = best_pair[0][:nlen]
-            sinfo_b = best_pair[1][:nlen]
+        print( args.onlymotifs, args.motiftoeval )
+        pred_res = bPPI_predict(args.seqA, args.seqB, args.onlymotifs, args.motiftoeval)
+        if( args.onlymotifs ):
+            predictions, n_pairs = pred_res
+            if( len(predictions) > 0 ):
+                for i in range(len(predictions)):
+                    print(f"Motif {i}: {predictions[i]}")
+                    print(f"Seq: {n_pairs[i]}")
+        else:
+            best_pair, atten_scores = pred_res
+            if( args.viewInteraction and best_pair is not None):
+                nlen = min(len(best_pair[0]), len(best_pair[1]))
+                sinfo_a = best_pair[0][:nlen]
+                sinfo_b = best_pair[1][:nlen]
 
-            atten_scores = atten_scores[0, :, :, :]
-            cls_attention = numpy.mean(atten_scores, axis=0)[0, :]
-            
-            plot_cls_attention_heptad(sinfo_a,
-                                      sinfo_b,
-                                      cls_attention,
-                                      [Path(args.seqA).name.split('.')[0], Path(args.seqB).name.split('.')[0]],
-                                     )
+                atten_scores = atten_scores[0, :, :, :]
+                cls_attention = numpy.mean(atten_scores, axis=0)[0, :]
+                
+                plot_cls_attention_heptad(sinfo_a,
+                                          sinfo_b,
+                                          cls_attention,
+                                          [Path(args.seqA).name.split('.')[0], Path(args.seqB).name.split('.')[0]],
+                                         )
     else:
         parser.print_help()
         print("\n Error: Please specify either --download OR both --seqA and --seqB flags.", file=sys.stderr)
