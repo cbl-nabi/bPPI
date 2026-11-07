@@ -173,7 +173,10 @@ def bPPI_predict(seqA, seqB, onlymotifs, motiftoeval, debug = False):
     bzip_motif_detector_loc = config["motif_detector"]
     bzip_interaction_predictor_loc = config["interaction_detector"]
     
-    print(f"Predicting with {bzip_interaction_predictor_loc.split('/')[-1].replace('.pt', '')}")
+    if( onlymotifs ):
+        print(f"Predicting motifs")
+    else:
+        print(f"Predicting with {bzip_interaction_predictor_loc.split('/')[-1].replace('.pt', '')}")
     config = configparser.ConfigParser()
     config.read('config')
     device = 'cpu'
