@@ -78,10 +78,13 @@ def find_motifs(protA,
     if(am_info.shape[0] > max_batch_size ):
         logits_clsf = []
         for i in range(0, am_info.shape[0], max_batch_size):
+            upper_idx_limit = min(len(n_pairs), i+max_batch_size)
+            if( upper_idx_limit == i ):
+                upper_idx_limit += 1
             tmp_logits_clsf, _ = evaluate_motifs(bzip_motif_detector, 
-                                                  am_info[i:i+max_batch_size, :], 
-                                                  add_info[i:i+max_batch_size, :, :], 
-                                                  seg_info[i:i+max_batch_size, :], 
+                                                  am_info[i:upper_idx_limit, :], 
+                                                  add_info[i:upper_idx_limit, :, :], 
+                                                  seg_info[i:upper_idx_limit, :], 
                                                   device)
             logits_clsf.append(tmp_logits_clsf)
         logits_clsf = numpy.concat(logits_clsf)
@@ -97,31 +100,24 @@ def find_motifs(protA,
     high_prob_indices = sorted_indices[sigmoid_prob[sorted_indices] > 0.5]
     if( len(high_prob_indices) == 0):
         return None, None, None
-    if( len(high_prob_indices) == 1):
-        high_prob_indices = [high_prob_indices]
     return sigmoid_prob[high_prob_indices], n_pairs[high_prob_indices], (am_info[high_prob_indices, :], add_info[high_prob_indices, :], seg_info[high_prob_indices, :])
 
-def predict_interaction(predictions, 
-                        motif_pairs,
+def predict_interaction(motif_pairs,
                         encoded_pairs, 
                         bzip_interaction_detector, 
                         best_motif,
                         device):
-    #best_motif = high_prob_indices[best_motif_idx:best_motif_idx+1]
     am_info, add_info, seg_info = encoded_pairs
-    best_motif = [best_motif]
     logits_clsf, enc_self_attn = evaluate_motifs(bzip_interaction_detector, 
-                                                  am_info[best_motif, :], 
-                                                  add_info[best_motif, :, :], 
-                                                  seg_info[best_motif, :], 
+                                                  am_info[ [best_motif], :], 
+                                                  add_info[ [best_motif], :, :], 
+                                                  seg_info[ [best_motif], :], 
                                                   device)
                                   
     sigmoid_prob = sigmoid(logits_clsf[0, 1])
     sigmoid_prob = numpy.round(sigmoid_prob, 2)
-    #best_pair = n_pairs[high_prob_indices[best_motif_idx]]
-    best_pair = motif_pairs[best_motif[0]]
     enc_self_attn = enc_self_attn.cpu().numpy()  
-    return sigmoid_prob, best_pair, enc_self_attn
+    return sigmoid_prob, enc_self_attn
         
 def save_config(motif_path, interaction_path):
     with open(CONFIG_FILE, "w") as f:
@@ -215,14 +211,13 @@ def bPPI_predict(seqA, seqB, onlymotifs, motiftoeval, debug = False):
     snap = torch.load(bzip_interaction_predictor_loc, weights_only=True, map_location=torch.device('cpu'))
     bzip_interaction_detector.load_state_dict(snap)
     bzip_interaction_detector = bzip_interaction_detector.to(device)
-
-    max_pred, best_pair, enc_self_attn = predict_interaction(predictions, 
-                                                             motif_pairs,
-                                                             encoded_pairs,
-                                                             bzip_interaction_detector, 
-                                                             motiftoeval, 
-                                                             device)
+    max_pred, enc_self_attn = predict_interaction(motif_pairs,
+                                                  encoded_pairs,
+                                                  bzip_interaction_detector, 
+                                                  motiftoeval, 
+                                                  device)
         
+    best_pair = motif_pairs[motiftoeval]
     print(f"Motifs detected: {len(predictions)}")
     print(f"Interaction Probability: {max_pred}")
     return best_pair, enc_self_attn
@@ -242,12 +237,10 @@ if __name__ == "__main__":
     parser.add_argument("--onlymotifs", action="store_true", help="View interaction. Default: False")
 
     args = parser.parse_args()
-    print(args)
     
     if args.download:
         download_models(args.download)
     elif args.seqA and args.seqB:
-        print( args.onlymotifs, args.motiftoeval )
         pred_res = bPPI_predict(args.seqA, args.seqB, args.onlymotifs, args.motiftoeval)
         if( args.onlymotifs ):
             predictions, n_pairs = pred_res
